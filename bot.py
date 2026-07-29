@@ -1,9 +1,3 @@
-#!/usr/bin/env python3
-"""
-Standalone SMS Bomber Bot (67 APIs)
-- Deployable on Railway
-"""
-
 import os
 import asyncio
 import logging
