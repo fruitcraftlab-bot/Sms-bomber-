@@ -16,7 +16,7 @@ from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 # ========== CONFIG ==========
-BOT_TOKEN = os.getenv("8812556044:AAGpg3RiD7P_u6wtCkCSF6yoNutHC2pROQg)
+BOT_TOKEN = os.getenv("8812556044:AAGpg3RiD7P_u6wtCkCSF6yoNutHC2pROQg")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "1967494059"))
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "RobiEntertainment")
 
