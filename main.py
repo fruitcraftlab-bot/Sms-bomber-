@@ -16,7 +16,11 @@ from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 # ========== CONFIG ==========
-BOT_TOKEN = os.getenv("8812556044:AAGpg3RiD7P_u6wtCkCSF6yoNutHC2pROQg")
+# ★★★ সংশোধন: সঠিকভাবে এনভায়রনমেন্ট ভেরিয়েবল থেকে টোকন নেওয়া ★★★
+BOT_TOKEN = os.getenv("BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN")
+if not BOT_TOKEN:
+    raise ValueError("❌ BOT_TOKEN or TELEGRAM_TOKEN environment variable not set!")
+
 ADMIN_ID = int(os.getenv("ADMIN_ID", "1967494059"))
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "RobiEntertainment")
 
@@ -350,7 +354,7 @@ async def handle_message(update, context):
     else:
         await update.message.reply_text("❌ Use buttons.", reply_markup=main_keyboard())
 
-# ========== MAIN (সংশোধিত – সিঙ্ক্রোনাস) ==========
+# ========== MAIN (সংশোধিত) ==========
 def main():
     print("="*50)
     print("💣 SMS BOMBER BOT (UPDATED – 50+ APIs)")
@@ -359,14 +363,16 @@ def main():
     print(f"📁 Database: {DB_PATH}")
     print("="*50)
 
-    # ডেটাবেস ইনিশিয়ালাইজ (অ্যাসিঙ্ক ফাংশনকে সিঙ্ক্রোনাসভাবে চালানো)
+    # ডেটাবেস ইনিশিয়ালাইজ
     asyncio.run(init_db())
 
+    # বট অ্যাপ্লিকেশন তৈরি
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    # ব্লকিং পোলিং শুরু
+    # পোলিং শুরু
+    print("✅ Bot is running...")
     app.run_polling()
 
 if __name__ == "__main__":
